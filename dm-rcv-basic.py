@@ -21,7 +21,7 @@ Example:
         dm_prefix: true
 """
 
-from mmrelay.db_utils import get_longname, get_shortname
+from mmrelay.db_utils import get_longname
 from mmrelay.plugins.base_plugin import BasePlugin
 
 
@@ -133,4 +133,7 @@ class Plugin(BasePlugin):
             self.logger.info(f"Forwarded DM to Matrix room {self.dm_room}")
 
         except Exception:
+            # Catch all exceptions to ensure plugin doesn't crash the relay
+            # send_matrix_message may raise various exceptions (network, API, etc.)
+            # Using broad exception handling for robustness in a plugin context
             self.logger.exception("Failed to forward DM to Matrix")
