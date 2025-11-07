@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Basic Direct Message Receiver Plugin for MMRelay.
 
@@ -72,7 +71,7 @@ class Plugin(BasePlugin):
         )
 
     async def handle_meshtastic_message(
-        self, packet, formatted_message, longname, meshnet_name
+        self, packet, _formatted_message, longname, _meshnet_name
     ):
         """Handle incoming Meshtastic messages and process direct messages."""
 
@@ -94,7 +93,6 @@ class Plugin(BasePlugin):
 
         # Get sender information
         sender_longname = longname or get_longname(sender_id) or str(sender_id)
-        sender_shortname = get_shortname(sender_id) or str(sender_id)
 
         self.logger.info(
             f"Received DM from {sender_longname}: {message_text[:50]}{'...' if len(message_text) > 50 else ''}"
@@ -102,7 +100,7 @@ class Plugin(BasePlugin):
 
         # Forward to Matrix room
         await self._forward_to_matrix(
-            sender_longname, sender_shortname, message_text, packet
+            sender_longname, sender_id, message_text
         )
 
         return True  # Indicate we handled this message
@@ -119,13 +117,10 @@ class Plugin(BasePlugin):
         return []  # No commands in basic version
 
     async def _forward_to_matrix(
-        self, sender_longname, sender_shortname, message_text, packet
+        self, sender_longname, sender_id, message_text
     ):
         """Forward direct message to the configured Matrix room."""
         try:
-            # Get sender device ID
-            sender_id = packet.get("fromId")
-
             # Build prefix
             prefix = "[DM] " if self.dm_prefix else ""
 
@@ -137,5 +132,5 @@ class Plugin(BasePlugin):
             await self.send_matrix_message(self.dm_room, formatted_message)
             self.logger.info(f"Forwarded DM to Matrix room {self.dm_room}")
 
-        except Exception as e:
-            self.logger.error(f"Failed to forward DM to Matrix: {e}")
+        except Exception:
+            self.logger.exception("Failed to forward DM to Matrix")
