@@ -19,23 +19,11 @@ community-plugins:
     active: true
     repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
     branch: main
-    dm_room: "!your-room-id:matrix.org"
+    dm_room: "!your-room-id:matrix.org" # Required: Matrix room for DMs
+    dm_prefix: true # Optional: Show [DM] prefix (default: true)
 ```
 
-### Required Configuration
-
-- `dm_room`: Matrix room ID or alias where DMs should be forwarded
-
-### Example
-
-```yaml
-community-plugins:
-  dm-rcv-basic:
-    active: true
-    repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
-    branch: main
-    dm_room: "!dm-logging:example.org"
-```
+Messages are formatted as: `[DM] Longname (DeviceID): Message`
 
 ## Usage
 

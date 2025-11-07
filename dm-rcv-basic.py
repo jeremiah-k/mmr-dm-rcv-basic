@@ -10,6 +10,7 @@ direct messages to the relay node are otherwise invisible to the relay operator.
 
 Configuration:
     dm_room: Matrix room ID/alias where DMs should be forwarded (required)
+    dm_prefix: Show [DM] prefix in messages (optional, default: true)
 
 Example:
     community-plugins:
@@ -18,6 +19,7 @@ Example:
         repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
         branch: main
         dm_room: "!dm-room:matrix.org"
+        dm_prefix: true
 """
 
 from mmrelay.db_utils import get_longname, get_shortname
@@ -35,6 +37,7 @@ class Plugin(BasePlugin):
 
     Configuration:
         dm_room: Matrix room ID/alias where DMs should be forwarded (required)
+        dm_prefix: Show [DM] prefix in messages (optional, default: true)
 
     Features:
         - Automatic DM detection using BasePlugin.is_direct_message()
@@ -58,8 +61,11 @@ class Plugin(BasePlugin):
         # Validate required configuration
         self.dm_room = self.config.get("dm_room")
         if not self.dm_room:
-            self.logger.error("rcv-dm-basic plugin requires 'dm_room' configuration")
+            self.logger.error("dm-rcv-basic plugin requires 'dm_room' configuration")
             raise ValueError("Missing required 'dm_room' configuration")
+
+        # Optional configuration
+        self.dm_prefix = self.config.get("dm_prefix", True)
 
         self.logger.info(
             f"Direct message plugin initialized - forwarding DMs to room: {self.dm_room}"
@@ -117,9 +123,15 @@ class Plugin(BasePlugin):
     ):
         """Forward direct message to the configured Matrix room."""
         try:
+            # Get sender device ID
+            sender_id = packet.get("fromId")
+
+            # Build prefix
+            prefix = "[DM] " if self.dm_prefix else ""
+
             # Format the message for Matrix
             formatted_message = (
-                f"📬 **Direct Message** from {sender_longname}:\n\n{message_text}"
+                f"{prefix}{sender_longname} ({sender_id}): {message_text}"
             )
 
             await self.send_matrix_message(self.dm_room, formatted_message)
