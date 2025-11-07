@@ -71,7 +71,7 @@ class Plugin(BasePlugin):
         )
 
     async def handle_meshtastic_message(
-        self, packet, _formatted_message, longname, _meshnet_name
+        self, packet, formatted_message, longname, meshnet_name
     ):
         """Handle incoming Meshtastic messages and process direct messages."""
 
@@ -99,9 +99,7 @@ class Plugin(BasePlugin):
         )
 
         # Forward to Matrix room
-        await self._forward_to_matrix(
-            sender_longname, sender_id, message_text
-        )
+        await self._forward_to_matrix(sender_longname, sender_id, message_text)
 
         return True  # Indicate we handled this message
 
@@ -116,9 +114,7 @@ class Plugin(BasePlugin):
         """Get list of Matrix commands this plugin responds to."""
         return []  # No commands in basic version
 
-    async def _forward_to_matrix(
-        self, sender_longname, sender_id, message_text
-    ):
+    async def _forward_to_matrix(self, sender_longname, sender_id, message_text):
         """Forward direct message to the configured Matrix room."""
         try:
             # Build prefix
