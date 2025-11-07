@@ -34,6 +34,3 @@ Messages appear as: `[DM] Longname (DeviceID): Message`
 - MMRelay version 1.2.5 or later
 - A Matrix room ID where DMs should be forwarded
 
-## Troubleshooting
-
-If you see `TypeError: Plugin.handle_meshtastic_message() got an unexpected keyword argument 'formatted_message'`, make sure you're using the latest version of this plugin from the main branch.
