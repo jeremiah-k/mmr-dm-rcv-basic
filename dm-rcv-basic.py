@@ -13,7 +13,7 @@ Configuration:
 
 Example:
     community-plugins:
-      rcv-dm-basic:
+      dm-rcv-basic:
         active: true
         repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
         branch: main
@@ -44,7 +44,7 @@ class Plugin(BasePlugin):
         - Minimal dependencies and configuration
     """
 
-    plugin_name = "rcv-dm-basic"
+    plugin_name = "dm-rcv-basic"
 
     @property
     def description(self):
