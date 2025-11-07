@@ -54,7 +54,13 @@ class Plugin(BasePlugin):
         return "Forward direct messages to Matrix room for visibility"
 
     def __init__(self):
-        """Initialize the direct message plugin."""
+        """
+        Configure and validate plugin settings required to forward direct messages to a Matrix room.
+        
+        Reads and stores the required `dm_room` configuration and the optional `dm_prefix` flag (defaults to True). Raises ValueError if `dm_room` is not provided. Logs initialization status.
+        Raises:
+            ValueError: If the required `dm_room` configuration is missing.
+        """
         super().__init__()
 
         # Validate required configuration
@@ -73,7 +79,18 @@ class Plugin(BasePlugin):
     async def handle_meshtastic_message(
         self, packet, formatted_message, longname, meshnet_name
     ):
-        """Handle incoming Meshtastic messages and process direct messages."""
+        """
+        Process an incoming Meshtastic message and forward direct messages to the configured Matrix room.
+        
+        Parameters:
+            packet (dict): Meshtastic message packet; expected to contain 'decoded' with 'text' for text messages and may include 'fromId'.
+            formatted_message (str | None): Preformatted message text (not used by this handler).
+            longname (str | None): Optional sender display name to use instead of resolving from the packet.
+            meshnet_name (str | None): Mesh network name (not used by this handler).
+        
+        Returns:
+            bool: `True` if the message was identified as a direct message and forwarded to the Matrix room, `False` otherwise.
+        """
 
         # Check if this is a direct message
         if not self.is_direct_message(packet):
@@ -111,11 +128,25 @@ class Plugin(BasePlugin):
         return False
 
     def get_matrix_commands(self):
-        """Get list of Matrix commands this plugin responds to."""
+        """
+        List Matrix commands the plugin supports.
+        
+        Returns:
+            commands (list): List of command descriptors accepted by the plugin; empty if the plugin exposes no Matrix commands.
+        """
         return []  # No commands in basic version
 
     async def _forward_to_matrix(self, sender_longname, sender_id, message_text):
-        """Forward direct message to the configured Matrix room."""
+        """
+        Send a direct Meshtastic message to the configured Matrix room.
+        
+        Formats the message (optionally prefixed with "[DM]") to include the sender's display name and node ID, then delivers it to the plugin's configured Matrix room.
+        
+        Parameters:
+            sender_longname (str): Human-readable name for the sender (may be a resolved longname or a fallback ID string).
+            sender_id (str): Sender's Mesh node identifier.
+            message_text (str): Raw message text to forward.
+        """
         try:
             # Build prefix
             prefix = "[DM] " if self.dm_prefix else ""
