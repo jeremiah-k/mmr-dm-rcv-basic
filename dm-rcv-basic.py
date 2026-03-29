@@ -21,7 +21,10 @@ Example:
         dm_prefix: true
 """
 
+from nio.rooms import MatrixRoom
+
 from mmrelay.db_utils import get_longname
+from mmrelay.matrix_utils import connect_matrix
 from mmrelay.plugins.base_plugin import BasePlugin
 
 
@@ -147,9 +150,6 @@ class Plugin(BasePlugin):
         """
         if self._joined_room:
             return
-
-        from mmrelay.matrix_utils import connect_matrix
-        from nio.rooms import MatrixRoom
 
         matrix_client = await connect_matrix()
         if matrix_client is None:
