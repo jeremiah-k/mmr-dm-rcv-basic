@@ -21,7 +21,7 @@ Example:
         dm_prefix: true
 """
 
-from nio.rooms import MatrixRoom
+import asyncio
 
 from mmrelay.db_utils import get_longname
 from mmrelay.matrix_utils import connect_matrix
@@ -80,6 +80,7 @@ class Plugin(BasePlugin):
         )
 
         self._joined_room = False
+        self._join_lock = asyncio.Lock()
 
     async def handle_meshtastic_message(
         self, packet, formatted_message, longname, meshnet_name
@@ -141,50 +142,101 @@ class Plugin(BasePlugin):
         """
         return []  # No commands in basic version
 
-    async def _ensure_joined(self):
+    async def _ensure_joined(self) -> bool:
         """
         Ensure the bot has joined the configured DM room.
 
-        Joins the room using matrix_client.join() if not already joined.
-        Manually tracks joined state to avoid repeated join attempts.
+        Returns:
+            bool: True if the room is already joined or join succeeds; False otherwise.
         """
         if self._joined_room:
-            return
+            return True
 
-        matrix_client = await connect_matrix()
-        if matrix_client is None:
-            self.logger.error("Failed to connect to Matrix client for room join")
-            return
+        async with self._join_lock:
+            if self._joined_room:
+                return True
 
-        if self.dm_room in matrix_client.rooms:
-            self._joined_room = True
-            self.logger.debug(f"Already in DM room {self.dm_room}")
-            return
+            matrix_client = await connect_matrix()
+            if matrix_client is None:
+                self.logger.error("Failed to connect to Matrix client for room join")
+                return False
 
-        self.logger.info(f"Joining DM room {self.dm_room}...")
-        try:
-            response = await matrix_client.join(self.dm_room)
-            joined_room_id = getattr(response, "room_id", None) if response else None
-            if joined_room_id:
-                self.logger.info(f"Joined DM room {joined_room_id} successfully")
-                self._joined_room = True
-                if joined_room_id not in matrix_client.rooms:
-                    matrix_client.rooms[joined_room_id] = MatrixRoom(
-                        room_id=joined_room_id,
-                        own_user_id=matrix_client.user_id,
-                        encrypted=False,
+            target_room = self.dm_room
+            if target_room.startswith("#"):
+                try:
+                    alias_response = await matrix_client.room_resolve_alias(target_room)
+                except Exception:
+                    self.logger.exception(
+                        f"Error resolving DM room alias {target_room}"
                     )
-            else:
+                    return False
+
+                resolved_room_id = (
+                    getattr(alias_response, "room_id", None) if alias_response else None
+                )
+                if not resolved_room_id:
+                    error_details = (
+                        getattr(alias_response, "message", alias_response)
+                        if alias_response
+                        else "Unknown error"
+                    )
+                    self.logger.error(
+                        f"Failed to resolve DM room alias {target_room}: {error_details}"
+                    )
+                    return False
+                target_room = resolved_room_id
+
+            if target_room in matrix_client.rooms:
+                self._joined_room = True
+                self.dm_room = target_room
+                self.logger.debug(f"Already in DM room {target_room}")
+                return True
+
+            self.logger.info(f"Joining DM room {target_room}...")
+            try:
+                response = await matrix_client.join(target_room)
+            except Exception:
+                self.logger.exception(f"Error joining DM room {target_room}")
+                return False
+
+            joined_room_id = getattr(response, "room_id", None) if response else None
+            if not joined_room_id:
                 error_details = (
-                    getattr(response, "message", response)
-                    if response
-                    else "Unknown error"
+                    getattr(response, "message", response) if response else "Unknown error"
                 )
                 self.logger.error(
-                    f"Failed to join DM room {self.dm_room}: {error_details}"
+                    f"Failed to join DM room {target_room}: {error_details}"
                 )
-        except Exception:
-            self.logger.exception(f"Error joining DM room {self.dm_room}")
+                return False
+
+            if joined_room_id not in matrix_client.rooms:
+                synced = getattr(matrix_client, "synced", None)
+                if synced is None:
+                    self.logger.error(
+                        f"Joined DM room {joined_room_id}, but Matrix sync state is unavailable"
+                    )
+                    return False
+
+                for _ in range(10):
+                    if joined_room_id in matrix_client.rooms:
+                        break
+                    try:
+                        await asyncio.wait_for(synced.wait(), timeout=5)
+                    except asyncio.TimeoutError:
+                        self.logger.debug(
+                            f"Waiting for DM room {joined_room_id} to appear in client cache..."
+                        )
+
+            if joined_room_id not in matrix_client.rooms:
+                self.logger.error(
+                    f"Joined DM room {joined_room_id}, but it never appeared in Matrix client rooms cache"
+                )
+                return False
+
+            self.logger.info(f"Joined DM room {joined_room_id} successfully")
+            self.dm_room = joined_room_id
+            self._joined_room = True
+            return True
 
     async def _forward_to_matrix(self, sender_longname, sender_id, message_text):
         """
@@ -198,7 +250,11 @@ class Plugin(BasePlugin):
             message_text (str): Raw message text to forward.
         """
         try:
-            await self._ensure_joined()
+            if not await self._ensure_joined():
+                self.logger.warning(
+                    f"Skipping DM forward because room join failed for {self.dm_room}"
+                )
+                return
 
             prefix = "[DM] " if self.dm_prefix else ""
 
