@@ -78,6 +78,15 @@ class Plugin(BasePlugin):
 
         self._joined_room = False
 
+    async def on_start(self) -> None:
+        """
+        Called after plugin startup to join the configured DM room.
+
+        Ensures the bot has joined the configured dm_room on startup,
+        so it's ready to receive DMs without waiting for first message.
+        """
+        await self._ensure_joined()
+
     async def handle_meshtastic_message(
         self, packet, formatted_message, longname, meshnet_name
     ):
