@@ -31,6 +31,7 @@ Messages appear as: `[DM] Longname (DeviceID): Message`
 
 ## Requirements
 
-- MMRelay version 1.2.5 or later
+- MMRelay version 1.3.2 or later for room joining on startup
+- MMRelay version 1.2.5 or later for basic functionality (older versions join rooms lazily on first DM)
 - A Matrix room ID where DMs should be forwarded
 
