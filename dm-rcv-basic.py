@@ -56,7 +56,7 @@ class Plugin(BasePlugin):
     def __init__(self):
         """
         Configure and validate plugin settings required to forward direct messages to a Matrix room.
-        
+
         Reads and stores the required `dm_room` configuration and the optional `dm_prefix` flag (defaults to True). Raises ValueError if `dm_room` is not provided. Logs initialization status.
         Raises:
             ValueError: If the required `dm_room` configuration is missing.
@@ -76,18 +76,20 @@ class Plugin(BasePlugin):
             f"Direct message plugin initialized - forwarding DMs to room: {self.dm_room}"
         )
 
+        self._joined_room = False
+
     async def handle_meshtastic_message(
         self, packet, formatted_message, longname, meshnet_name
     ):
         """
         Process an incoming Meshtastic message and forward direct messages to the configured Matrix room.
-        
+
         Parameters:
             packet (dict): Meshtastic message packet; expected to contain 'decoded' with 'text' for text messages and may include 'fromId'.
             formatted_message (str | None): Preformatted message text (not used by this handler).
             longname (str | None): Optional sender display name to use instead of resolving from the packet.
             meshnet_name (str | None): Mesh network name (not used by this handler).
-        
+
         Returns:
             bool: `True` if the message was identified as a direct message and forwarded to the Matrix room, `False` otherwise.
         """
@@ -130,25 +132,74 @@ class Plugin(BasePlugin):
     def get_matrix_commands(self):
         """
         List Matrix commands the plugin supports.
-        
+
         Returns:
             commands (list): List of command descriptors accepted by the plugin; empty if the plugin exposes no Matrix commands.
         """
         return []  # No commands in basic version
 
+    async def _ensure_joined(self):
+        """
+        Ensure the bot has joined the configured DM room.
+
+        Joins the room using matrix_client.join() if not already joined.
+        Manually tracks joined state to avoid repeated join attempts.
+        """
+        if self._joined_room:
+            return
+
+        from mmrelay.matrix_utils import connect_matrix
+        from nio.rooms import MatrixRoom
+
+        matrix_client = await connect_matrix()
+        if matrix_client is None:
+            self.logger.error("Failed to connect to Matrix client for room join")
+            return
+
+        if self.dm_room in matrix_client.rooms:
+            self._joined_room = True
+            self.logger.debug(f"Already in DM room {self.dm_room}")
+            return
+
+        self.logger.info(f"Joining DM room {self.dm_room}...")
+        try:
+            response = await matrix_client.join(self.dm_room)
+            joined_room_id = getattr(response, "room_id", None) if response else None
+            if joined_room_id:
+                self.logger.info(f"Joined DM room {joined_room_id} successfully")
+                self._joined_room = True
+                if joined_room_id not in matrix_client.rooms:
+                    matrix_client.rooms[joined_room_id] = MatrixRoom(
+                        room_id=joined_room_id,
+                        own_user_id=matrix_client.user_id,
+                        encrypted=False,
+                    )
+            else:
+                error_details = (
+                    getattr(response, "message", response)
+                    if response
+                    else "Unknown error"
+                )
+                self.logger.error(
+                    f"Failed to join DM room {self.dm_room}: {error_details}"
+                )
+        except Exception:
+            self.logger.exception(f"Error joining DM room {self.dm_room}")
+
     async def _forward_to_matrix(self, sender_longname, sender_id, message_text):
         """
         Send a direct Meshtastic message to the configured Matrix room.
-        
+
         Formats the message (optionally prefixed with "[DM]") to include the sender's display name and node ID, then delivers it to the plugin's configured Matrix room.
-        
+
         Parameters:
             sender_longname (str): Human-readable name for the sender (may be a resolved longname or a fallback ID string).
             sender_id (str): Sender's Mesh node identifier.
             message_text (str): Raw message text to forward.
         """
         try:
-            # Build prefix
+            await self._ensure_joined()
+
             prefix = "[DM] " if self.dm_prefix else ""
 
             # Format the message for Matrix
