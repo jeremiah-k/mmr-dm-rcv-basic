@@ -16,7 +16,7 @@ Example:
       dm-rcv-basic:
         active: true
         repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
-        branch: main
+        commit: 5d4fa7d6011b6efc9590e2ee79295e87a5b349bc
         dm_room: "!dm-room:matrix.org"
         dm_prefix: true
 """
