@@ -18,7 +18,7 @@ community-plugins:
   dm-rcv-basic:
     active: true
     repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
-    commit: 5d4fa7d6011b6efc9590e2ee79295e87a5b349bc # Pin to a specific release
+    commit: 5d4fa7d6011b6efc9590e2ee79295e87a5b349bc # v1.0.0
     dm_room: "!your-room-id:matrix.org" # Required: Matrix room for DMs
     dm_prefix: true # Optional: Show [DM] prefix (default: true)
 ```
