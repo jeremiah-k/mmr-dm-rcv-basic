@@ -44,6 +44,10 @@ The plugin does not send Matrix replies back to the DM sender.
 
 Messages appear as: `[DM] Longname (DeviceID): Message`
 
+Names and message text are sent as plain text, preserving whitespace and literal
+Markdown or HTML characters. Plugin logs include sender IDs and message lengths,
+without DM text. Delivery failures are logged; messages are not stored for retry.
+
 ## Requirements
 
 - MMRelay version 1.2.5 or later

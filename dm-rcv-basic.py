@@ -22,10 +22,12 @@ Example:
 """
 
 import asyncio
+from collections.abc import Mapping
 
 from mmrelay.db_utils import get_longname
 from mmrelay.matrix_utils import connect_matrix
 from mmrelay.plugins.base_plugin import BasePlugin
+from nio import RoomSendError
 
 _ROOM_SYNC_TIMEOUT_SECONDS = 50.0
 _ROOM_SYNC_POLL_SECONDS = 0.1
@@ -106,30 +108,37 @@ class Plugin(BasePlugin):
             meshnet_name (str | None): Mesh network name (not used by this handler).
 
         Returns:
-            bool: `True` if the message was identified as a direct message and forwarded to the Matrix room, `False` otherwise.
+            bool: True when a text DM is claimed, including a failed delivery;
+                False for packets this plugin does not handle.
         """
 
-        # Check if this is a direct message
-        if not self.is_direct_message(packet):
+        if not isinstance(packet, Mapping):
             return False
-
-        # Extract message content
-        if "decoded" not in packet or "text" not in packet["decoded"]:
+        decoded = packet.get("decoded")
+        if not isinstance(decoded, Mapping):
             self.logger.debug("Received non-text DM packet, ignoring")
             return False
-
-        message_text = packet["decoded"]["text"].strip()
-        sender_id = packet.get("fromId")
-
-        if not message_text:
-            self.logger.debug("Received empty DM, ignoring")
+        message_text = decoded.get("text")
+        if not isinstance(message_text, str) or not message_text.strip():
+            self.logger.debug("Received empty or non-text packet, ignoring")
+            return False
+        if not await asyncio.to_thread(self.is_direct_message, packet):
             return False
 
-        # Get sender information
-        sender_longname = longname or get_longname(sender_id) or str(sender_id)
+        sender_id = packet.get("fromId")
+        if not isinstance(sender_id, str) or not sender_id:
+            sender_num = packet.get("from")
+            sender_id = (
+                f"!{sender_num:08x}"
+                if type(sender_num) is int and 0 < sender_num < 0xFFFFFFFF
+                else "unknown"
+            )
+        sender_longname = (
+            longname or await asyncio.to_thread(get_longname, sender_id) or sender_id
+        )
 
         self.logger.info(
-            f"Received DM from {sender_longname}: {message_text[:50]}{'...' if len(message_text) > 50 else ''}"
+            "Received text DM from %s (%d characters)", sender_id, len(message_text)
         )
 
         # Forward to Matrix room
@@ -265,7 +274,14 @@ class Plugin(BasePlugin):
                 f"{prefix}{sender_longname} ({sender_id}): {message_text}"
             )
 
-            await self.send_matrix_message(self.dm_room, formatted_message)
+            response = await self.send_matrix_message(
+                self.dm_room, formatted_message, formatted=False
+            )
+            if response is None or isinstance(response, RoomSendError):
+                self.logger.error(
+                    "Failed to forward DM to Matrix room %s", self.dm_room
+                )
+                return
             self.logger.info(f"Forwarded DM to Matrix room {self.dm_room}")
 
         except Exception:

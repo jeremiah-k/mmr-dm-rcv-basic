@@ -4,12 +4,15 @@ import asyncio
 import importlib.util
 import logging
 import sys
+import threading
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
+from mmrelay import matrix_utils
 from mmrelay.plugins import base_plugin
+from nio import RoomSendError, RoomSendResponse
 
 ROOM = "!inbox:example.org"
 SPEC = importlib.util.spec_from_file_location(
@@ -180,3 +183,146 @@ def test_join_cancellation_propagates_and_releases_lock(plugin, monkeypatch):
         assert await plugin._ensure_joined() is True
 
     asyncio.run(scenario())
+
+
+@pytest.fixture
+def delivery(plugin, monkeypatch):
+    """Keep the real DM detector and Matrix sender while replacing network I/O."""
+    plugin._my_node_id = 0x12345678
+    matrix = client({ROOM: object()})
+    matrix.room_send = AsyncMock(return_value=RoomSendResponse("$event", ROOM))
+    connect = AsyncMock(return_value=matrix)
+    monkeypatch.setattr(receiver, "connect_matrix", connect)
+    monkeypatch.setattr(matrix_utils, "connect_matrix", connect)
+    return matrix
+
+
+def packet(**overrides):
+    """Build a direct text packet with the fields supplied by Meshtastic."""
+    value = {
+        "to": 0x12345678,
+        "from": 0xA4BF9D0C,
+        "fromId": "!a4bf9d0c",
+        "decoded": {"portnum": "TEXT_MESSAGE_APP", "text": "hello"},
+    }
+    value.update(overrides)
+    return value
+
+
+@pytest.mark.parametrize("prefix", [True, False])
+def test_dm_body_is_literal_and_blocking_helpers_run_off_loop(
+    plugin, delivery, monkeypatch, caplog, prefix
+):
+    """Preserve untrusted text and keep node/database lookups off the event loop."""
+    loop_thread = threading.get_ident()
+    text = "  **private** <b>message</b>\nsecond line  "
+    name = "Sender **name**"
+
+    def get_node_id():
+        assert threading.get_ident() != loop_thread
+        return 0x12345678
+
+    def get_name(sender_id):
+        assert threading.get_ident() != loop_thread
+        assert sender_id == "!a4bf9d0c"
+        return name
+
+    monkeypatch.setattr(plugin, "get_my_node_id", get_node_id)
+    monkeypatch.setattr(receiver, "get_longname", get_name)
+    plugin.dm_prefix = prefix
+    with caplog.at_level(logging.INFO):
+        assert (
+            asyncio.run(
+                plugin.handle_meshtastic_message(
+                    packet(decoded={"text": text}), "unused", None, "unused"
+                )
+            )
+            is True
+        )
+    delivery.room_send.assert_awaited_once_with(
+        room_id=ROOM,
+        message_type="m.room.message",
+        content={
+            "msgtype": "m.text",
+            "body": f"{'[DM] ' if prefix else ''}{name} (!a4bf9d0c): {text}",
+        },
+    )
+    assert "private" not in caplog.text
+    assert "Forwarded DM" in caplog.text
+
+
+@pytest.mark.parametrize("destination", [None, 0xFFFFFFFF, 0x87654321])
+def test_packets_not_addressed_to_relay_are_ignored(plugin, delivery, destination):
+    """Other recipients and broadcasts must never enter the private inbox."""
+    assert (
+        asyncio.run(
+            plugin.handle_meshtastic_message(packet(to=destination), "", "Sender", "")
+        )
+        is False
+    )
+    delivery.room_send.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "incoming",
+    [
+        None,
+        {},
+        packet(decoded=None),
+        packet(decoded={}),
+        packet(decoded={"text": None}),
+        packet(decoded={"text": 123}),
+        packet(decoded={"text": b"binary"}),
+        packet(decoded={"text": " \n "}),
+    ],
+)
+def test_malformed_or_empty_text_is_ignored(plugin, delivery, incoming):
+    """Malformed decoder output must not raise or send content to Matrix."""
+    assert (
+        asyncio.run(plugin.handle_meshtastic_message(incoming, "", "Sender", ""))
+        is False
+    )
+    delivery.room_send.assert_not_awaited()
+
+
+def test_numeric_sender_is_normalized_for_lookup_and_display(
+    plugin, delivery, monkeypatch
+):
+    """Packets without fromId retain an identifiable sender from the node number."""
+    get_name = Mock(return_value=None)
+    monkeypatch.setattr(receiver, "get_longname", get_name)
+    assert (
+        asyncio.run(plugin.handle_meshtastic_message(packet(fromId=None), "", None, ""))
+        is True
+    )
+    get_name.assert_called_once_with("!a4bf9d0c")
+    assert delivery.room_send.call_args.kwargs["content"]["body"] == (
+        "[DM] !a4bf9d0c (!a4bf9d0c): hello"
+    )
+
+
+@pytest.mark.parametrize(
+    "failure", [None, RoomSendError("Forbidden"), RuntimeError("offline")]
+)
+def test_failed_matrix_sends_are_not_reported_as_delivered(
+    plugin, delivery, caplog, failure
+):
+    """A claimed DM may fail delivery without emitting a success log."""
+    if isinstance(failure, Exception):
+        delivery.room_send.side_effect = failure
+    else:
+        delivery.room_send.return_value = failure
+    with caplog.at_level(logging.INFO):
+        assert (
+            asyncio.run(plugin.handle_meshtastic_message(packet(), "", "Sender", ""))
+            is True
+        )
+    assert "Forwarded DM" not in caplog.text
+    assert "Failed to forward DM" in caplog.text
+
+
+def test_delivery_cancellation_propagates(plugin, delivery):
+    """Do not suppress relay shutdown while sending a DM."""
+    delivery.room_send.side_effect = asyncio.CancelledError
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(plugin.handle_meshtastic_message(packet(), "", "Sender", ""))
