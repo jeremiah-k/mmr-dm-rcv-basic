@@ -16,7 +16,7 @@ Example:
       dm-rcv-basic:
         active: true
         repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
-        commit: 5d4fa7d6011b6efc9590e2ee79295e87a5b349bc
+        commit: "<full-commit-sha>"  # Replace with a reviewed commit SHA
         dm_room: "!dm-room:matrix.org"
         dm_prefix: true
 """
@@ -26,6 +26,9 @@ import asyncio
 from mmrelay.db_utils import get_longname
 from mmrelay.matrix_utils import connect_matrix
 from mmrelay.plugins.base_plugin import BasePlugin
+
+_ROOM_SYNC_TIMEOUT_SECONDS = 50.0
+_ROOM_SYNC_POLL_SECONDS = 0.1
 
 
 class Plugin(BasePlugin):
@@ -50,6 +53,7 @@ class Plugin(BasePlugin):
     """
 
     plugin_name = "dm-rcv-basic"
+    handles_unmapped_rooms = True
 
     @property
     def description(self):
@@ -67,10 +71,18 @@ class Plugin(BasePlugin):
         super().__init__()
 
         # Validate required configuration
-        self.dm_room = self.config.get("dm_room")
-        if not self.dm_room:
-            self.logger.error("dm-rcv-basic plugin requires 'dm_room' configuration")
-            raise ValueError("Missing required 'dm_room' configuration")
+        dm_room = self.config.get("dm_room")
+        if not isinstance(dm_room, str):
+            raise ValueError("'dm_room' must be a Matrix room ID or alias")
+        self.dm_room = dm_room.strip()
+        localpart, separator, server = self.dm_room[1:].partition(":")
+        if (
+            not self.dm_room.startswith(("!", "#"))
+            or not localpart
+            or not separator
+            or not server
+        ):
+            raise ValueError("'dm_room' must be a Matrix room ID or alias")
 
         # Optional configuration
         self.dm_prefix = self.config.get("dm_prefix", True)
@@ -79,7 +91,6 @@ class Plugin(BasePlugin):
             f"Direct message plugin initialized - forwarding DMs to room: {self.dm_room}"
         )
 
-        self._joined_room = False
         self._join_lock = asyncio.Lock()
 
     async def handle_meshtastic_message(
@@ -142,6 +153,10 @@ class Plugin(BasePlugin):
         """
         return []  # No commands in basic version
 
+    def get_unmapped_room_ids(self) -> list[str]:
+        """Declare the inbox for plugin-owned room invitation handling."""
+        return [self.dm_room]
+
     async def _ensure_joined(self) -> bool:
         """
         Ensure the bot has joined the configured DM room.
@@ -149,13 +164,7 @@ class Plugin(BasePlugin):
         Returns:
             bool: True if the room is already joined or join succeeds; False otherwise.
         """
-        if self._joined_room:
-            return True
-
         async with self._join_lock:
-            if self._joined_room:
-                return True
-
             matrix_client = await connect_matrix()
             if matrix_client is None:
                 self.logger.error("Failed to connect to Matrix client for room join")
@@ -185,9 +194,9 @@ class Plugin(BasePlugin):
                     )
                     return False
                 target_room = resolved_room_id
+                self.dm_room = target_room
 
             if target_room in matrix_client.rooms:
-                self._joined_room = True
                 self.dm_room = target_room
                 self.logger.debug(f"Already in DM room {target_room}")
                 return True
@@ -202,30 +211,24 @@ class Plugin(BasePlugin):
             joined_room_id = getattr(response, "room_id", None) if response else None
             if not joined_room_id:
                 error_details = (
-                    getattr(response, "message", response) if response else "Unknown error"
+                    getattr(response, "message", response)
+                    if response
+                    else "Unknown error"
                 )
                 self.logger.error(
                     f"Failed to join DM room {target_room}: {error_details}"
                 )
                 return False
 
-            if joined_room_id not in matrix_client.rooms:
-                synced = getattr(matrix_client, "synced", None)
-                if synced is None:
-                    self.logger.error(
-                        f"Joined DM room {joined_room_id}, but Matrix sync state is unavailable"
-                    )
-                    return False
-
-                for _ in range(10):
-                    if joined_room_id in matrix_client.rooms:
-                        break
-                    try:
-                        await asyncio.wait_for(synced.wait(), timeout=5)
-                    except asyncio.TimeoutError:
-                        self.logger.debug(
-                            f"Waiting for DM room {joined_room_id} to appear in client cache..."
-                        )
+            # A client's synced event may still be set from an earlier sync.
+            # Wait for this room's state without clearing that shared event.
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + _ROOM_SYNC_TIMEOUT_SECONDS
+            while joined_room_id not in matrix_client.rooms:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(_ROOM_SYNC_POLL_SECONDS, remaining))
 
             if joined_room_id not in matrix_client.rooms:
                 self.logger.error(
@@ -235,7 +238,6 @@ class Plugin(BasePlugin):
 
             self.logger.info(f"Joined DM room {joined_room_id} successfully")
             self.dm_room = joined_room_id
-            self._joined_room = True
             return True
 
     async def _forward_to_matrix(self, sender_longname, sender_id, message_text):
