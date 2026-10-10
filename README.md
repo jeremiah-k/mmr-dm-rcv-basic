@@ -11,23 +11,42 @@ A simple plugin for Meshtastic-Matrix-Relay that captures direct messages sent t
 
 ## Quick Setup
 
-Add this to your MMR `config.yaml`:
+Add this to your MMR `config.yaml`. Replace `<full-commit-sha>` with the full
+40-character SHA of the plugin commit you have reviewed:
 
 ```yaml
 community-plugins:
   dm-rcv-basic:
     active: true
     repository: https://github.com/jeremiah-k/mmr-dm-rcv-basic.git
-    commit: 5d4fa7d6011b6efc9590e2ee79295e87a5b349bc # v1.0.0
+    commit: "<full-commit-sha>"
     dm_room: "!your-room-id:matrix.org" # Required: Matrix room for DMs
     dm_prefix: true # Optional: Show [DM] prefix (default: true)
 ```
 
-**That's it!** Restart MMR and the plugin will automatically forward direct messages to your configured room.
+Restart MMR after saving the configuration.
+
+Invite the relay's Matrix account to the inbox room and give it permission to
+send messages. Use an internal room ID (`!room:server`) when possible. Relays
+that support plugin-owned rooms accept inbox invitations without a
+`matrix_rooms` entry; room aliases depend on alias metadata in the invitation.
+The plugin also resolves aliases and joins lazily when a DM arrives. Joining
+waits up to 50 seconds for room state to reach the Matrix client. A failed join
+skips that forward; a later DM retries. Membership is checked against the active
+client on every forward, including after reconnects.
+
+Use a private inbox with an audience appropriate for direct messages. Everyone
+in that Matrix room can read the forwarded messages. Keep the inbox out of
+`matrix_rooms` unless ordinary conversation there should also reach the mesh.
+The plugin does not send Matrix replies back to the DM sender.
 
 ## Message Format
 
 Messages appear as: `[DM] Longname (DeviceID): Message`
+
+Names and message text are sent as plain text, preserving whitespace and literal
+Markdown or HTML characters. Plugin logs include sender IDs and message lengths,
+without DM text. Delivery failures are logged; messages are not stored for retry.
 
 ## Requirements
 
