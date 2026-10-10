@@ -28,6 +28,11 @@ lint:
     - prettier@3.9.9
     - ruff@0.17.0
     - trufflehog@3.99.2
+  ignore:
+    # Pytest asserts are the test suite's mechanism, not unchecked security claims.
+    - linters: [bandit]
+      paths:
+        - tests
 actions:
   enabled:
     - trunk-upgrade-available
